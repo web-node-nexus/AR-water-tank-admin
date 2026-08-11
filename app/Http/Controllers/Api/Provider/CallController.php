@@ -29,7 +29,8 @@ class CallController extends Controller
 
     public function callback(Request $request): JsonResponse
     {
-        // Exotel status callback webhook
+        $this->callService->handleStatusCallback($request->all());
+
         return response()->json(['status' => 'received']);
     }
 }

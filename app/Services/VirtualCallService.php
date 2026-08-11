@@ -11,14 +11,14 @@ use Illuminate\Support\Facades\Log;
 class VirtualCallService
 {
     /**
-     * Initiate masked call: provider calls customer via company virtual number.
-     * Customer sees virtual number, not provider's personal number.
+     * Initiate masked call: provider is dialed first, then customer is bridged.
+     * Both parties see the company virtual number (CallerId), not each other's number.
      */
     public function initiateCall(ServiceProvider $provider, Booking $booking): array
     {
-        $virtualNumber = config('integrations.exotel.virtual_number');
-        $customerPhone = $this->formatPhone($booking->customer_phone);
-        $providerPhone = $this->formatPhone($provider->phone);
+        $virtualNumber = $this->formatCallerId((string) config('integrations.exotel.virtual_number'));
+        $customerPhone = $this->formatPhone((string) $booking->customer_phone);
+        $providerPhone = $this->formatPhone((string) $provider->phone);
 
         $callLog = CallLog::create([
             'provider_id' => $provider->id,
@@ -55,54 +55,191 @@ class VirtualCallService
             ];
         }
 
-        $subdomain = config('integrations.exotel.subdomain', 'api');
+        if (! $providerPhone || ! $customerPhone) {
+            $callLog->update(['status' => 'failed', 'meta' => ['error' => 'Missing provider or customer phone']]);
+
+            return [
+                'success' => false,
+                'message' => 'Provider or customer phone number is missing.',
+            ];
+        }
+
+        if ($providerPhone === $customerPhone) {
+            $callLog->update(['status' => 'failed', 'meta' => ['error' => 'From and To are the same number']]);
+
+            return [
+                'success' => false,
+                'message' => 'Provider and customer numbers are the same. Update customer phone in booking.',
+            ];
+        }
+
+        // Indian Exotel accounts use Mumbai cluster: api.in.exotel.com
+        $subdomain = config('integrations.exotel.subdomain', 'api.in');
         $url = "https://{$subdomain}.exotel.com/v1/Accounts/{$sid}/Calls/connect.json";
+
+        $payload = [
+            'From' => $providerPhone,
+            'To' => $customerPhone,
+            'CallerId' => $virtualNumber,
+            'CallType' => 'trans',
+            'TimeOut' => 45,
+            'StatusCallback' => url('/api/provider/calls/callback'),
+            'StatusCallbackContentType' => 'application/json',
+            'CustomField' => 'call_log_id:'.$callLog->id,
+        ];
+
+        Log::info('Exotel connect request', [
+            'url' => $url,
+            'from' => $providerPhone,
+            'to' => $customerPhone,
+            'caller_id' => $virtualNumber,
+            'call_log_id' => $callLog->id,
+        ]);
 
         $response = Http::withBasicAuth($apiKey, $apiToken)
             ->asForm()
-            ->post($url, [
-                'From' => $providerPhone,
-                'To' => $customerPhone,
-                'CallerId' => $virtualNumber,
-                'CallType' => 'trans',
-                'StatusCallback' => url('/api/provider/calls/callback'),
-            ]);
+            ->timeout(30)
+            ->post($url, $payload);
 
         if ($response->successful()) {
             $data = $response->json();
             $callSid = $data['Call']['Sid'] ?? null;
+            $responseTo = $data['Call']['To'] ?? null;
 
             $callLog->update([
                 'status' => 'connected',
                 'provider_call_id' => $callSid,
-                'meta' => $data,
+                'meta' => [
+                    'request' => $payload,
+                    'response' => $data,
+                ],
             ]);
+
+            // If Exotel response has empty To, second leg will never dial.
+            if (empty($responseTo)) {
+                Log::warning('Exotel response missing To leg', ['call_sid' => $callSid, 'data' => $data]);
+
+                return [
+                    'success' => false,
+                    'message' => 'Call started but customer leg was not queued. Check Exotel trial verified numbers / call flow on ExoPhone.',
+                    'virtual_number' => $virtualNumber,
+                    'call_log_id' => $callLog->id,
+                ];
+            }
 
             return [
                 'success' => true,
                 'mode' => 'live',
-                'message' => 'Connecting your call via company number',
+                'message' => 'Your phone will ring first. After you answer, customer will be connected via '.$virtualNumber,
                 'virtual_number' => $virtualNumber,
+                'from' => $providerPhone,
+                'to' => $customerPhone,
                 'call_log_id' => $callLog->id,
             ];
         }
 
-        $callLog->update(['status' => 'failed', 'meta' => ['error' => $response->body()]]);
+        $body = $response->body();
+        Log::error('Exotel connect failed', [
+            'status' => $response->status(),
+            'body' => $body,
+            'from' => $providerPhone,
+            'to' => $customerPhone,
+        ]);
+
+        $callLog->update([
+            'status' => 'failed',
+            'meta' => [
+                'request' => $payload,
+                'http_status' => $response->status(),
+                'error' => $body,
+            ],
+        ]);
+
+        $message = 'Unable to initiate call. Please try again.';
+        $json = $response->json();
+        if (is_array($json) && isset($json['RestException']['Message'])) {
+            $message = $json['RestException']['Message'];
+        }
 
         return [
             'success' => false,
-            'message' => 'Unable to initiate call. Please try again.',
+            'message' => $message,
         ];
     }
 
-    protected function formatPhone(string $phone): string
+    public function handleStatusCallback(array $payload): void
     {
-        $phone = preg_replace('/\D/', '', $phone);
+        $callSid = $payload['CallSid'] ?? $payload['Sid'] ?? null;
+        $status = $payload['Status'] ?? $payload['DialCallStatus'] ?? null;
+        $custom = (string) ($payload['CustomField'] ?? '');
+        $callLogId = null;
 
-        if (strlen($phone) === 10) {
-            return '0'.$phone;
+        if (preg_match('/call_log_id:(\d+)/', $custom, $m)) {
+            $callLogId = (int) $m[1];
         }
 
-        return $phone;
+        $callLog = $callLogId
+            ? CallLog::find($callLogId)
+            : ($callSid ? CallLog::where('provider_call_id', $callSid)->latest()->first() : null);
+
+        if (! $callLog) {
+            Log::info('Exotel callback without matching call log', $payload);
+
+            return;
+        }
+
+        $meta = $callLog->meta ?? [];
+        $meta['callbacks'] = array_values(array_merge($meta['callbacks'] ?? [], [$payload]));
+
+        $update = ['meta' => $meta];
+        if ($status) {
+            $update['status'] = strtolower((string) $status);
+        }
+        if (isset($payload['DialCallDuration']) || isset($payload['Duration'])) {
+            $update['duration_seconds'] = (int) ($payload['DialCallDuration'] ?? $payload['Duration']);
+        }
+
+        $callLog->update($update);
+    }
+
+    /**
+     * Exotel India expects E.164 for From/To: +91XXXXXXXXXX
+     */
+    protected function formatPhone(string $phone): string
+    {
+        $phone = preg_replace('/\D/', '', $phone) ?? '';
+
+        if ($phone === '') {
+            return '';
+        }
+
+        // 9198XXXXXXXX -> +9198XXXXXXXX
+        if (strlen($phone) === 12 && str_starts_with($phone, '91')) {
+            return '+'.$phone;
+        }
+
+        // 098XXXXXXXX -> +9198XXXXXXXX
+        if (strlen($phone) === 11 && str_starts_with($phone, '0')) {
+            return '+91'.substr($phone, 1);
+        }
+
+        // 98XXXXXXXX (10-digit mobile)
+        if (strlen($phone) === 10) {
+            return '+91'.$phone;
+        }
+
+        if (str_starts_with($phone, '91') && strlen($phone) > 10) {
+            return '+'.$phone;
+        }
+
+        return '+'.$phone;
+    }
+
+    /**
+     * ExoPhone CallerId: digits only, no +, no dashes (e.g. 01143060441)
+     */
+    protected function formatCallerId(string $number): string
+    {
+        return preg_replace('/\D/', '', $number) ?? '';
     }
 }
