@@ -14,8 +14,8 @@ class VirtualCallService
      * Masked click-to-call via Exotel.
      *
      * Dial order:
-     * 1) Customer is dialed first (their phone rings with virtual CallerId)
-     * 2) After customer answers, provider is dialed and both are bridged
+     * 1) Provider is dialed first (must answer)
+     * 2) Then customer/user is dialed and both are bridged
      */
     public function initiateCall(ServiceProvider $provider, Booking $booking): array
     {
@@ -70,9 +70,9 @@ class VirtualCallService
             ];
         }
 
-        // Customer first: customer phone rings; after answer, provider is bridged.
-        $from = $customerPhone;
-        $to = $providerPhone;
+        // Provider first, then customer/user.
+        $from = $providerPhone;
+        $to = $customerPhone;
 
         $primary = config('integrations.exotel.subdomain', 'api');
         $hosts = array_values(array_unique([$primary, 'api', 'api.in']));
@@ -97,8 +97,8 @@ class VirtualCallService
 
             Log::info('Exotel connect request', [
                 'url' => $url,
-                'from_customer' => $from,
-                'to_provider' => $to,
+                'from_provider' => $from,
+                'to_customer' => $to,
                 'caller_id' => $virtualNumber,
                 'call_log_id' => $callLog->id,
             ]);
@@ -131,7 +131,7 @@ class VirtualCallService
                 'provider_call_id' => $callSid,
                 'meta' => [
                     'host' => $usedHost,
-                    'dial_order' => 'customer_first',
+                    'dial_order' => 'provider_first',
                     'request' => $payload,
                     'response' => $data,
                 ],
@@ -149,7 +149,7 @@ class VirtualCallService
             return [
                 'success' => true,
                 'mode' => 'live',
-                'message' => 'Customer ki phone pe call ja rahi hai ('.$virtualNumber.' se). Customer uthaye ke baad aapki phone bajegi. Trial pe customer number Exotel me verified hona zaroori hai.',
+                'message' => 'Pehle aapki phone bajegi. Uthane ke baad customer ko call jayegi ('.$virtualNumber.' se). Trial pe customer number verified hona chahiye.',
                 'virtual_number' => $virtualNumber,
                 'from' => $from,
                 'to' => $to,
