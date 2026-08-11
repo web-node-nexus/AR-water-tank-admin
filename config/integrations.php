@@ -17,7 +17,7 @@ return [
         'api_key' => env('EXOTEL_API_KEY'),
         'api_token' => env('EXOTEL_API_TOKEN'),
         'virtual_number' => env('EXOTEL_VIRTUAL_NUMBER'), // Company virtual number shown to customer
-        'subdomain' => env('EXOTEL_SUBDOMAIN', 'api.in'),
+        'subdomain' => env('EXOTEL_SUBDOMAIN', 'api'),
     ],
 
     'whatsapp' => [

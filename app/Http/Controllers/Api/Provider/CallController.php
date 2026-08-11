@@ -18,8 +18,10 @@ class CallController extends Controller
      */
     public function callCustomer(Request $request, Booking $booking): JsonResponse
     {
-        if ($booking->provider_id !== $request->user()->id) {
-            return response()->json(['message' => 'Unauthorized.'], 403);
+        if ((int) $booking->provider_id !== (int) $request->user()->id) {
+            return response()->json([
+                'message' => 'This job is not assigned to you.',
+            ], 403);
         }
 
         $result = $this->callService->initiateCall($request->user(), $booking);

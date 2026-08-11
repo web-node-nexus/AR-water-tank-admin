@@ -180,7 +180,7 @@ class JobController extends Controller
 
     protected function authorizeJob(Request $request, Booking $booking): void
     {
-        if ($booking->provider_id !== $request->user()->id) {
+        if ($booking->provider_id != $request->user()->id) {
             abort(403, 'This job is not assigned to you.');
         }
     }

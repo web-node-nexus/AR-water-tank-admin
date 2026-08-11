@@ -73,9 +73,9 @@ class VirtualCallService
             ];
         }
 
-        // Indian Exotel accounts use Mumbai cluster: api.in.exotel.com
-        $subdomain = config('integrations.exotel.subdomain', 'api.in');
-        $url = "https://{$subdomain}.exotel.com/v1/Accounts/{$sid}/Calls/connect.json";
+        // Prefer configured host; Indian accounts may need api.in, others api.
+        $primary = config('integrations.exotel.subdomain', 'api');
+        $hosts = array_values(array_unique([$primary, 'api', 'api.in']));
 
         $payload = [
             'From' => $providerPhone,
@@ -88,20 +88,42 @@ class VirtualCallService
             'CustomField' => 'call_log_id:'.$callLog->id,
         ];
 
-        Log::info('Exotel connect request', [
-            'url' => $url,
-            'from' => $providerPhone,
-            'to' => $customerPhone,
-            'caller_id' => $virtualNumber,
-            'call_log_id' => $callLog->id,
-        ]);
+        $response = null;
+        $usedHost = $primary;
+        $lastBody = null;
 
-        $response = Http::withBasicAuth($apiKey, $apiToken)
-            ->asForm()
-            ->timeout(30)
-            ->post($url, $payload);
+        foreach ($hosts as $subdomain) {
+            $usedHost = $subdomain;
+            $url = "https://{$subdomain}.exotel.com/v1/Accounts/{$sid}/Calls/connect.json";
 
-        if ($response->successful()) {
+            Log::info('Exotel connect request', [
+                'url' => $url,
+                'from' => $providerPhone,
+                'to' => $customerPhone,
+                'caller_id' => $virtualNumber,
+                'call_log_id' => $callLog->id,
+            ]);
+
+            $response = Http::withBasicAuth($apiKey, $apiToken)
+                ->asForm()
+                ->timeout(30)
+                ->post($url, $payload);
+
+            $lastBody = $response->body();
+
+            // Wrong datacenter often returns 401 — try the other host.
+            if ($response->status() === 401) {
+                Log::warning('Exotel auth failed on host, trying next', [
+                    'host' => $subdomain,
+                    'body' => $lastBody,
+                ]);
+                continue;
+            }
+
+            break;
+        }
+
+        if ($response && $response->successful()) {
             $data = $response->json();
             $callSid = $data['Call']['Sid'] ?? null;
             $responseTo = $data['Call']['To'] ?? null;
@@ -110,6 +132,7 @@ class VirtualCallService
                 'status' => 'connected',
                 'provider_call_id' => $callSid,
                 'meta' => [
+                    'host' => $usedHost,
                     'request' => $payload,
                     'response' => $data,
                 ],
@@ -121,7 +144,7 @@ class VirtualCallService
 
                 return [
                     'success' => false,
-                    'message' => 'Call started but customer leg was not queued. Check Exotel trial verified numbers / call flow on ExoPhone.',
+                    'message' => 'Call started but customer leg was not queued. On Exotel trial, verify the customer number first.',
                     'virtual_number' => $virtualNumber,
                     'call_log_id' => $callLog->id,
                 ];
@@ -138,27 +161,35 @@ class VirtualCallService
             ];
         }
 
-        $body = $response->body();
+        $body = $lastBody ?? '';
         Log::error('Exotel connect failed', [
-            'status' => $response->status(),
+            'status' => $response?->status(),
             'body' => $body,
             'from' => $providerPhone,
             'to' => $customerPhone,
+            'host' => $usedHost,
         ]);
 
         $callLog->update([
             'status' => 'failed',
             'meta' => [
+                'host' => $usedHost,
                 'request' => $payload,
-                'http_status' => $response->status(),
+                'http_status' => $response?->status(),
                 'error' => $body,
             ],
         ]);
 
         $message = 'Unable to initiate call. Please try again.';
-        $json = $response->json();
-        if (is_array($json) && isset($json['RestException']['Message'])) {
-            $message = $json['RestException']['Message'];
+        $json = $response?->json();
+        if (is_array($json)) {
+            $message = $json['RestException']['Message']
+                ?? $json['message']
+                ?? $message;
+        }
+
+        if ($response?->status() === 401) {
+            $message = 'Exotel authentication failed. Check API key/token and EXOTEL_SUBDOMAIN (api or api.in).';
         }
 
         return [
