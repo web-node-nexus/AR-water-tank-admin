@@ -30,7 +30,13 @@
                                         <p style="margin:0 0 8px;color:#0f172a;font-size:15px;"><strong>Service:</strong> {{ $booking->service?->name ?? 'Water Tank Cleaning' }}</p>
                                         <p style="margin:0 0 8px;color:#0f172a;font-size:15px;"><strong>Date:</strong> {{ $booking->scheduled_date?->format('d M Y') }}</p>
                                         <p style="margin:0 0 8px;color:#0f172a;font-size:15px;"><strong>Amount:</strong> ₹{{ number_format($booking->amount) }}</p>
-                                        <p style="margin:0;color:#0f172a;font-size:15px;"><strong>Address:</strong> {{ $booking->customer_address }}</p>
+                                        <p style="margin:0 0 8px;color:#0f172a;font-size:15px;"><strong>Address:</strong> {{ $booking->customer_address }}</p>
+                                        @if($booking->latitude && $booking->longitude)
+                                        <p style="margin:8px 0 0;color:#0f172a;font-size:15px;">
+                                            <strong>Location:</strong>
+                                            <a href="{{ $booking->mapsUrl() }}" style="color:#0891b2;">{{ $booking->latitude }}, {{ $booking->longitude }}</a>
+                                        </p>
+                                        @endif
                                     </td>
                                 </tr>
                             </table>

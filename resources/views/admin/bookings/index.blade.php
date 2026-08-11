@@ -19,9 +19,14 @@
             <input type="date" name="date" value="{{ request('date') }}" class="rounded-xl border border-slate-300 px-3 py-2 text-sm focus:border-cyan-500 outline-none">
             <button type="submit" class="px-4 py-2 bg-slate-900 text-white text-sm font-medium rounded-xl hover:bg-slate-800">Filter</button>
         </form>
-        <a href="{{ route('admin.bookings.create') }}" class="inline-flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-cyan-600 to-blue-600 text-white text-sm font-semibold rounded-xl hover:from-cyan-700 hover:to-blue-700 shadow-lg shadow-cyan-500/25">
-            + New Booking
-        </a>
+        <div class="flex flex-wrap gap-2">
+            <a href="{{ route('admin.bookings.import') }}" class="inline-flex items-center gap-2 px-4 py-2 border border-cyan-600 text-cyan-700 text-sm font-semibold rounded-xl hover:bg-cyan-50">
+                Upload Excel
+            </a>
+            <a href="{{ route('admin.bookings.create') }}" class="inline-flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-cyan-600 to-blue-600 text-white text-sm font-semibold rounded-xl hover:from-cyan-700 hover:to-blue-700 shadow-lg shadow-cyan-500/25">
+                + New Booking
+            </a>
+        </div>
     </div>
 
     <div class="bg-white rounded-2xl border border-slate-200/80 shadow-sm overflow-hidden">

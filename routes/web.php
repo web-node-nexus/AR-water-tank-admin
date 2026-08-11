@@ -25,6 +25,9 @@ Route::get('/', function () {
 Route::middleware(['auth', 'admin'])->prefix('admin')->name('admin.')->group(function () {
     Route::get('/dashboard', [DashboardController::class, 'index'])->name('dashboard');
 
+    Route::get('bookings/import', [BookingController::class, 'importForm'])->name('bookings.import');
+    Route::get('bookings/import/template', [BookingController::class, 'downloadTemplate'])->name('bookings.import.template');
+    Route::post('bookings/import', [BookingController::class, 'import'])->name('bookings.import.store');
     Route::resource('bookings', BookingController::class);
     Route::post('bookings/{booking}/assign', [BookingController::class, 'assign'])->name('bookings.assign');
     Route::post('bookings/{booking}/cancel', [BookingController::class, 'cancel'])->name('bookings.cancel');

@@ -23,6 +23,17 @@
                 <div><span class="text-slate-500">Tank</span><p class="font-medium">{{ $booking->tank_type ?? '—' }} {{ $booking->tank_size ? '('.$booking->tank_size.')' : '' }}</p></div>
                 <div><span class="text-slate-500">Provider</span><p class="font-medium">{{ $booking->provider?->name ?? 'Not assigned' }}</p></div>
                 <div class="col-span-2"><span class="text-slate-500">Address</span><p class="font-medium">{{ $booking->customer_address }}</p></div>
+                @if($booking->latitude && $booking->longitude)
+                <div class="col-span-2">
+                    <span class="text-slate-500">Location (Lat / Long)</span>
+                    <p class="font-medium">
+                        <a href="{{ $booking->mapsUrl() }}" target="_blank" rel="noopener" class="text-cyan-600 hover:underline">
+                            {{ $booking->latitude }}, {{ $booking->longitude }}
+                        </a>
+                        <span class="text-xs text-slate-400 ml-2">Open in Google Maps</span>
+                    </p>
+                </div>
+                @endif
                 @if($booking->special_notes)
                 <div class="col-span-2"><span class="text-slate-500">Notes</span><p class="font-medium">{{ $booking->special_notes }}</p></div>
                 @endif

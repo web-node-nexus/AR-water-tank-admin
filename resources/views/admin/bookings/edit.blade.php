@@ -24,6 +24,16 @@
         </div>
         <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div>
+                <label class="block text-sm font-medium text-slate-700 mb-1">Latitude</label>
+                <input type="number" name="latitude" value="{{ old('latitude', $booking->latitude) }}" step="any" placeholder="e.g. 28.7041000" class="w-full rounded-xl border border-slate-300 px-4 py-2.5 text-sm focus:border-cyan-500 outline-none">
+            </div>
+            <div>
+                <label class="block text-sm font-medium text-slate-700 mb-1">Longitude</label>
+                <input type="number" name="longitude" value="{{ old('longitude', $booking->longitude) }}" step="any" placeholder="e.g. 77.1025000" class="w-full rounded-xl border border-slate-300 px-4 py-2.5 text-sm focus:border-cyan-500 outline-none">
+            </div>
+        </div>
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div>
                 <label class="block text-sm font-medium text-slate-700 mb-1">Service</label>
                 <select name="service_id" required class="w-full rounded-xl border border-slate-300 px-4 py-2.5 text-sm focus:border-cyan-500 outline-none">
                     @foreach($services as $service)

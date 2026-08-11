@@ -26,6 +26,19 @@
         </div>
         <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div>
+                <label class="block text-sm font-medium text-slate-700 mb-1">Latitude</label>
+                <input type="number" name="latitude" value="{{ old('latitude') }}" step="any" placeholder="e.g. 28.7041000" class="w-full rounded-xl border border-slate-300 px-4 py-2.5 text-sm focus:border-cyan-500 outline-none">
+                @error('latitude')<p class="text-xs text-red-600 mt-1">{{ $message }}</p>@enderror
+            </div>
+            <div>
+                <label class="block text-sm font-medium text-slate-700 mb-1">Longitude</label>
+                <input type="number" name="longitude" value="{{ old('longitude') }}" step="any" placeholder="e.g. 77.1025000" class="w-full rounded-xl border border-slate-300 px-4 py-2.5 text-sm focus:border-cyan-500 outline-none">
+                @error('longitude')<p class="text-xs text-red-600 mt-1">{{ $message }}</p>@enderror
+            </div>
+        </div>
+        <p class="text-xs text-slate-400 -mt-3">Optional. Provider app will open Google Maps directions to these coordinates.</p>
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div>
                 <label class="block text-sm font-medium text-slate-700 mb-1">Pincode</label>
                 <input type="text" name="pincode" value="{{ old('pincode') }}" class="w-full rounded-xl border border-slate-300 px-4 py-2.5 text-sm focus:border-cyan-500 outline-none">
             </div>

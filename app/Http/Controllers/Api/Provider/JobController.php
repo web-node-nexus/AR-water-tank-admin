@@ -193,6 +193,9 @@ class JobController extends Controller
             'customer_name' => $booking->customer_name,
             'customer_phone' => $booking->customer_phone,
             'customer_address' => $booking->customer_address,
+            'latitude' => $booking->latitude !== null ? (float) $booking->latitude : null,
+            'longitude' => $booking->longitude !== null ? (float) $booking->longitude : null,
+            'maps_url' => $booking->mapsUrl(),
             'service_name' => $booking->service?->name,
             'tank_type' => $booking->tank_type,
             'tank_size' => $booking->tank_size,
@@ -221,7 +224,6 @@ class JobController extends Controller
                 'rating' => $booking->feedback->rating,
                 'review' => $booking->feedback->review,
             ] : null,
-            'maps_url' => 'https://www.google.com/maps/search/?api=1&query='.urlencode($booking->customer_address),
         ]);
     }
 }
