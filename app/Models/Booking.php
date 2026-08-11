@@ -46,11 +46,11 @@ class Booking extends Model
     {
         if ($this->latitude !== null && $this->longitude !== null) {
             return 'https://www.google.com/maps/dir/?api=1&destination='
-                .$this->latitude.','.$this->longitude;
+                .$this->latitude.','.$this->longitude.'&travelmode=driving';
         }
 
         return 'https://www.google.com/maps/dir/?api=1&destination='
-            .urlencode((string) $this->customer_address);
+            .urlencode((string) $this->customer_address).'&travelmode=driving';
     }
 
     public function customer(): BelongsTo

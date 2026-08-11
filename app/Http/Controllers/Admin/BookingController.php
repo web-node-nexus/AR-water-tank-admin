@@ -17,10 +17,6 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Mail;
 use Illuminate\Support\Facades\Validator;
-use PhpOffice\PhpSpreadsheet\IOFactory;
-use PhpOffice\PhpSpreadsheet\Shared\Date as ExcelDate;
-use PhpOffice\PhpSpreadsheet\Spreadsheet;
-use PhpOffice\PhpSpreadsheet\Writer\Xlsx;
 use Symfony\Component\HttpFoundation\StreamedResponse;
 use Throwable;
 
@@ -82,10 +78,6 @@ class BookingController extends Controller
 
     public function downloadTemplate(): StreamedResponse
     {
-        $spreadsheet = new Spreadsheet;
-        $sheet = $spreadsheet->getActiveSheet();
-        $sheet->setTitle('Bookings');
-
         $headers = [
             'customer_name',
             'customer_phone',
@@ -104,89 +96,67 @@ class BookingController extends Controller
             'special_notes',
         ];
 
-        foreach ($headers as $col => $header) {
-            $sheet->setCellValue([$col + 1, 1], $header);
-        }
-
         $firstService = Service::where('is_active', true)->first();
         $firstProvider = ServiceProvider::where('is_active', true)->first();
         $firstZone = Zone::where('is_active', true)->first();
 
-        $sheet->fromArray([
+        $sample = [
             'Rahul Sharma',
             '9876543210',
             'House 42, Rajeev Nagar, North West Delhi',
             '28.7041000',
             '77.1025000',
             '110085',
-            $firstZone?->id,
-            $firstService?->id,
+            $firstZone?->id ?? '',
+            $firstService?->id ?? '',
             'Overhead',
             '1000L',
             $firstService?->base_price ?? 999,
             date('Y-m-d', strtotime('+1 day')),
             '10:00',
-            $firstProvider?->id,
+            $firstProvider?->id ?? '',
             'Call before arrival',
-        ], null, 'A2');
+        ];
 
-        foreach (range(1, count($headers)) as $col) {
-            $sheet->getColumnDimensionByColumn($col)->setAutoSize(true);
-        }
-
-        $guide = $spreadsheet->createSheet();
-        $guide->setTitle('Instructions');
-        $guide->fromArray([
-            ['Column', 'Required', 'Notes'],
-            ['customer_name', 'Yes', 'Customer full name'],
-            ['customer_phone', 'Yes', '10-15 digit phone'],
-            ['customer_address', 'Yes', 'Full address text'],
-            ['latitude', 'No', 'e.g. 28.7041000'],
-            ['longitude', 'No', 'e.g. 77.1025000'],
-            ['pincode', 'No', 'Area pincode'],
-            ['zone_id', 'No', 'Use Zone ID from admin Zones page'],
-            ['service_id', 'Yes', 'Use Service ID from admin Services page'],
-            ['tank_type', 'No', 'Overhead / Underground'],
-            ['tank_size', 'No', 'e.g. 1000L'],
-            ['amount', 'Yes', 'Booking amount in INR'],
-            ['scheduled_date', 'Yes', 'YYYY-MM-DD or Excel date'],
-            ['scheduled_time', 'No', 'HH:MM (24h)'],
-            ['provider_id', 'No', 'Leave blank to assign later'],
-            ['special_notes', 'No', 'Optional notes'],
-            ['', '', ''],
-            ['Tip', '', 'Each row creates one booking. Keep the header row as-is.'],
-        ]);
-        $guide->getColumnDimension('A')->setWidth(22);
-        $guide->getColumnDimension('B')->setWidth(12);
-        $guide->getColumnDimension('C')->setWidth(50);
-
-        $spreadsheet->setActiveSheetIndex(0);
-
-        return response()->streamDownload(function () use ($spreadsheet) {
-            $writer = new Xlsx($spreadsheet);
-            $writer->save('php://output');
-        }, 'booking-import-template.xlsx', [
-            'Content-Type' => 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        return response()->streamDownload(function () use ($headers, $sample) {
+            $out = fopen('php://output', 'w');
+            // UTF-8 BOM so Excel opens Hindi/special chars correctly
+            fwrite($out, "\xEF\xBB\xBF");
+            fputcsv($out, $headers);
+            fputcsv($out, $sample);
+            fclose($out);
+        }, 'booking-import-template.csv', [
+            'Content-Type' => 'text/csv; charset=UTF-8',
         ]);
     }
 
     public function import(Request $request)
     {
         $request->validate([
-            'file' => 'required|file|mimes:xlsx,xls,csv|max:5120',
+            'file' => 'required|file|mimes:xlsx,xls,csv,txt|max:5120',
         ]);
 
-        $spreadsheet = IOFactory::load($request->file('file')->getRealPath());
-        $rows = $spreadsheet->getActiveSheet()->toArray(null, true, true, true);
+        $file = $request->file('file');
+        $extension = strtolower($file->getClientOriginalExtension() ?: $file->extension());
 
-        if (count($rows) < 2) {
-            return back()->with('error', 'Excel file is empty. Add at least one booking row.');
+        try {
+            $matrix = $this->readImportRows($file->getRealPath(), $extension);
+        } catch (Throwable $e) {
+            Log::error('Booking import parse failed', ['error' => $e->getMessage()]);
+
+            return back()->with('error', $e->getMessage());
         }
 
-        $headerRow = array_shift($rows);
+        if (count($matrix) < 2) {
+            return back()->with('error', 'File is empty. Add at least one booking row below the header.');
+        }
+
+        $headerRow = array_shift($matrix);
         $headers = [];
         foreach ($headerRow as $col => $value) {
             $key = strtolower(trim((string) $value));
+            // strip BOM from first header if present
+            $key = preg_replace('/^\x{FEFF}/u', '', $key) ?? $key;
             if ($key !== '') {
                 $headers[$col] = $key;
             }
@@ -204,7 +174,7 @@ class BookingController extends Controller
 
         DB::beginTransaction();
         try {
-            foreach ($rows as $index => $row) {
+            foreach ($matrix as $index => $row) {
                 $line = $index + 2;
                 $data = [];
                 foreach ($headers as $col => $field) {
@@ -278,6 +248,49 @@ class BookingController extends Controller
         }
 
         return redirect()->route('admin.bookings.index')->with('success', $message);
+    }
+
+    /**
+     * @return list<list<mixed>>
+     */
+    protected function readImportRows(string $path, string $extension): array
+    {
+        if (in_array($extension, ['csv', 'txt'], true)) {
+            return $this->readCsvRows($path);
+        }
+
+        if (! class_exists(\PhpOffice\PhpSpreadsheet\IOFactory::class)) {
+            throw new \RuntimeException(
+                'Excel (.xlsx) support is not installed on server. Please upload the CSV template, or run composer install on the server.'
+            );
+        }
+
+        $spreadsheet = \PhpOffice\PhpSpreadsheet\IOFactory::load($path);
+        $sheetRows = $spreadsheet->getActiveSheet()->toArray(null, true, true, false);
+
+        return array_values(array_map(
+            fn ($row) => array_values($row ?? []),
+            $sheetRows
+        ));
+    }
+
+    /**
+     * @return list<list<string|null>>
+     */
+    protected function readCsvRows(string $path): array
+    {
+        $handle = fopen($path, 'r');
+        if ($handle === false) {
+            throw new \RuntimeException('Could not read uploaded file.');
+        }
+
+        $rows = [];
+        while (($row = fgetcsv($handle)) !== false) {
+            $rows[] = $row;
+        }
+        fclose($handle);
+
+        return $rows;
     }
 
     public function show(Booking $booking)
@@ -468,11 +481,21 @@ class BookingController extends Controller
         }
 
         if (is_numeric($value)) {
-            try {
-                return ExcelDate::excelToDateTimeObject((float) $value)->format('Y-m-d');
-            } catch (Throwable) {
-                return (string) $value;
+            $serial = (float) $value;
+            if (class_exists(\PhpOffice\PhpSpreadsheet\Shared\Date::class)) {
+                try {
+                    return \PhpOffice\PhpSpreadsheet\Shared\Date::excelToDateTimeObject($serial)->format('Y-m-d');
+                } catch (Throwable) {
+                    // fall through
+                }
             }
+
+            // Excel serial date → unix (days since 1899-12-30)
+            if ($serial > 20000) {
+                return gmdate('Y-m-d', (int) (($serial - 25569) * 86400));
+            }
+
+            return (string) $value;
         }
 
         $timestamp = strtotime((string) $value);
@@ -487,11 +510,18 @@ class BookingController extends Controller
         }
 
         if (is_numeric($value) && (float) $value < 1) {
-            try {
-                return ExcelDate::excelToDateTimeObject((float) $value)->format('H:i');
-            } catch (Throwable) {
-                return (string) $value;
+            $fraction = (float) $value;
+            if (class_exists(\PhpOffice\PhpSpreadsheet\Shared\Date::class)) {
+                try {
+                    return \PhpOffice\PhpSpreadsheet\Shared\Date::excelToDateTimeObject($fraction)->format('H:i');
+                } catch (Throwable) {
+                    // fall through
+                }
             }
+
+            $seconds = (int) round($fraction * 86400);
+
+            return gmdate('H:i', $seconds);
         }
 
         $raw = trim((string) $value);

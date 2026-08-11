@@ -37,6 +37,7 @@ Route::prefix('provider')->group(function () {
         Route::post('/jobs/{booking}/photos', [JobController::class, 'uploadPhoto']);
 
         Route::post('/jobs/{booking}/call', [CallController::class, 'callCustomer']);
+        Route::get('/calls/{callLog}', [CallController::class, 'status']);
 
         Route::get('/profile', [ProfileController::class, 'show']);
         Route::match(['put', 'post'], '/profile', [ProfileController::class, 'update']);

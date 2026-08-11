@@ -8,20 +8,20 @@
 <div class="max-w-3xl space-y-6">
     <div class="bg-white rounded-2xl border border-slate-200/80 shadow-sm p-6 space-y-5">
         <div>
-            <h2 class="text-base font-semibold text-slate-900">Upload Excel (.xlsx)</h2>
-            <p class="text-sm text-slate-500 mt-1">Each row in the file creates one booking. Download the template, fill rows, then upload.</p>
+            <h2 class="text-base font-semibold text-slate-900">Upload Excel / CSV</h2>
+            <p class="text-sm text-slate-500 mt-1">Template download karo (CSV — Excel me open hoga), rows bharo, phir upload karo. Har row = ek booking.</p>
         </div>
 
         <a href="{{ route('admin.bookings.import.template') }}"
            class="inline-flex items-center gap-2 px-4 py-2.5 border border-slate-300 text-slate-700 text-sm font-medium rounded-xl hover:bg-slate-50">
-            Download Excel Template
+            Download Template (CSV / Excel)
         </a>
 
         <form method="POST" action="{{ route('admin.bookings.import.store') }}" enctype="multipart/form-data" class="space-y-4 pt-2">
             @csrf
             <div>
-                <label class="block text-sm font-medium text-slate-700 mb-1">Excel File *</label>
-                <input type="file" name="file" accept=".xlsx,.xls,.csv" required
+                <label class="block text-sm font-medium text-slate-700 mb-1">File (.csv / .xlsx) *</label>
+                <input type="file" name="file" accept=".xlsx,.xls,.csv,text/csv" required
                        class="w-full rounded-xl border border-slate-300 px-4 py-2.5 text-sm file:mr-4 file:py-1.5 file:px-3 file:rounded-lg file:border-0 file:bg-cyan-50 file:text-cyan-700 file:font-medium">
                 @error('file')<p class="text-xs text-red-600 mt-1">{{ $message }}</p>@enderror
             </div>

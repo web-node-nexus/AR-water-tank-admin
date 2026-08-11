@@ -5,7 +5,18 @@
 @section('page-subtitle', 'Manually enter a customer booking')
 
 @section('content')
-<div class="max-w-3xl">
+<div class="max-w-3xl space-y-4">
+    <div class="rounded-2xl border border-cyan-200 bg-cyan-50/80 px-5 py-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+        <div>
+            <p class="text-sm font-semibold text-cyan-900">Bulk create via Excel</p>
+            <p class="text-xs text-cyan-700 mt-0.5">Multiple bookings ek saath create karne ke liye Excel upload karo.</p>
+        </div>
+        <a href="{{ route('admin.bookings.import') }}"
+           class="inline-flex items-center justify-center gap-2 px-4 py-2.5 bg-cyan-600 text-white text-sm font-semibold rounded-xl hover:bg-cyan-700 shadow-sm shrink-0">
+            Upload Excel
+        </a>
+    </div>
+
     <form method="POST" action="{{ route('admin.bookings.store') }}" class="bg-white rounded-2xl border border-slate-200/80 shadow-sm p-6 space-y-6">
         @csrf
         <div class="grid grid-cols-1 md:grid-cols-2 gap-4">

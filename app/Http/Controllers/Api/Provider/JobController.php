@@ -191,7 +191,6 @@ class JobController extends Controller
             'id' => $booking->id,
             'booking_number' => $booking->booking_number,
             'customer_name' => $booking->customer_name,
-            'customer_phone' => $booking->customer_phone,
             'customer_address' => $booking->customer_address,
             'latitude' => $booking->latitude !== null ? (float) $booking->latitude : null,
             'longitude' => $booking->longitude !== null ? (float) $booking->longitude : null,

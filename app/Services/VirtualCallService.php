@@ -16,10 +16,12 @@ class VirtualCallService
      * Dial order:
      * 1) Provider is dialed first (must answer)
      * 2) Then customer/user is dialed and both are bridged
+     * Customer sees company ExoPhone (+ configured business caller name via Truecaller/CNAM).
      */
     public function initiateCall(ServiceProvider $provider, Booking $booking): array
     {
         $virtualNumber = $this->formatCallerId((string) config('integrations.exotel.virtual_number'));
+        $callerName = (string) config('integrations.exotel.caller_name', 'A.R WATER TANK CLEANER');
         $customerPhone = $this->formatPhone((string) $booking->customer_phone);
         $providerPhone = $this->formatPhone((string) $provider->phone);
 
@@ -30,6 +32,9 @@ class VirtualCallService
             'virtual_number' => $virtualNumber,
             'provider_phone' => $provider->phone,
             'status' => 'initiated',
+            'meta' => [
+                'caller_name' => $callerName,
+            ],
         ]);
 
         $sid = config('integrations.exotel.sid');
@@ -38,9 +43,9 @@ class VirtualCallService
 
         if (! $sid || ! $apiKey || ! $apiToken || ! $virtualNumber) {
             $callLog->update([
-                'status' => 'connected',
+                'status' => 'ringing',
                 'provider_call_id' => 'demo-'.uniqid(),
-                'meta' => ['mode' => 'demo'],
+                'meta' => array_merge($callLog->meta ?? [], ['mode' => 'demo']),
             ]);
 
             return [
@@ -48,25 +53,31 @@ class VirtualCallService
                 'mode' => 'demo',
                 'message' => 'Demo mode: configure EXOTEL_* in .env for live calls.',
                 'virtual_number' => $virtualNumber,
+                'caller_name' => $callerName,
                 'call_log_id' => $callLog->id,
+                'status' => 'ringing',
             ];
         }
 
         if (! $providerPhone || ! $customerPhone) {
-            $callLog->update(['status' => 'failed', 'meta' => ['error' => 'Missing phone']]);
+            $callLog->update(['status' => 'failed', 'meta' => array_merge($callLog->meta ?? [], ['error' => 'Missing phone'])]);
 
             return [
                 'success' => false,
                 'message' => 'Provider or customer phone number is missing.',
+                'call_log_id' => $callLog->id,
+                'status' => 'failed',
             ];
         }
 
         if ($providerPhone === $customerPhone) {
-            $callLog->update(['status' => 'failed', 'meta' => ['error' => 'Same numbers']]);
+            $callLog->update(['status' => 'failed', 'meta' => array_merge($callLog->meta ?? [], ['error' => 'Same numbers'])]);
 
             return [
                 'success' => false,
                 'message' => 'Provider and customer numbers are the same. Update customer phone in booking.',
+                'call_log_id' => $callLog->id,
+                'status' => 'failed',
             ];
         }
 
@@ -81,10 +92,14 @@ class VirtualCallService
             'From' => $from,
             'To' => $to,
             'CallerId' => $virtualNumber,
+            // Display name for customer CLI (honoured when Exotel/Truecaller CNAM is enabled).
+            'CallerName' => $callerName,
             'CallType' => 'trans',
             'TimeOut' => 45,
             'StatusCallback' => url('/api/provider/calls/callback'),
-            'CustomField' => 'call_log_id:'.$callLog->id,
+            'StatusCallbackEvents[0]' => 'terminal',
+            'StatusCallbackEvents[1]' => 'answered',
+            'CustomField' => 'call_log_id:'.$callLog->id.'|caller:'.$callerName,
         ];
 
         $response = null;
@@ -100,6 +115,7 @@ class VirtualCallService
                 'from_provider' => $from,
                 'to_customer' => $to,
                 'caller_id' => $virtualNumber,
+                'caller_name' => $callerName,
                 'call_log_id' => $callLog->id,
             ]);
 
@@ -125,11 +141,14 @@ class VirtualCallService
             $data = $response->json();
             $callSid = $data['Call']['Sid'] ?? null;
             $responseTo = $data['Call']['To'] ?? null;
+            $exotelStatus = strtolower((string) ($data['Call']['Status'] ?? 'queued'));
 
             $callLog->update([
-                'status' => 'connected',
+                // Stay "queued" until StatusCallback / poll says ringing (provider phone ringing).
+                'status' => $this->normalizeStatus($exotelStatus) === 'ringing' ? 'ringing' : 'queued',
                 'provider_call_id' => $callSid,
                 'meta' => [
+                    'caller_name' => $callerName,
                     'host' => $usedHost,
                     'dial_order' => 'provider_first',
                     'request' => $payload,
@@ -142,18 +161,22 @@ class VirtualCallService
                     'success' => false,
                     'message' => 'Customer call was not queued. On Exotel free trial, verify customer number in Exotel dashboard first.',
                     'virtual_number' => $virtualNumber,
+                    'caller_name' => $callerName,
                     'call_log_id' => $callLog->id,
+                    'status' => $callLog->status,
                 ];
             }
 
             return [
                 'success' => true,
                 'mode' => 'live',
-                'message' => 'Pehle aapki phone bajegi. Uthane ke baad customer ko call jayegi ('.$virtualNumber.' se). Trial pe customer number verified hona chahiye.',
+                'message' => 'Connecting… Your phone will ring first.',
                 'virtual_number' => $virtualNumber,
+                'caller_name' => $callerName,
                 'from' => $from,
                 'to' => $to,
                 'call_log_id' => $callLog->id,
+                'status' => $callLog->status,
             ];
         }
 
@@ -169,6 +192,7 @@ class VirtualCallService
         $callLog->update([
             'status' => 'failed',
             'meta' => [
+                'caller_name' => $callerName,
                 'host' => $usedHost,
                 'request' => $payload,
                 'http_status' => $response?->status(),
@@ -188,13 +212,39 @@ class VirtualCallService
         return [
             'success' => false,
             'message' => $message,
+            'call_log_id' => $callLog->id,
+            'status' => 'failed',
+        ];
+    }
+
+    /**
+     * Pollable status for provider app "Connecting…" loader.
+     */
+    public function getCallStatus(CallLog $callLog): array
+    {
+        $this->refreshFromExotel($callLog);
+        $callLog->refresh();
+
+        $status = strtolower((string) $callLog->status);
+        $isRinging = in_array($status, ['ringing', 'in-progress', 'answered', 'connected', 'completed'], true);
+        $isFailed = in_array($status, ['failed', 'busy', 'no-answer', 'canceled', 'cancelled'], true);
+        $isTerminal = $isFailed || in_array($status, ['completed'], true);
+
+        return [
+            'call_log_id' => $callLog->id,
+            'status' => $status,
+            'is_ringing' => $isRinging,
+            'is_failed' => $isFailed,
+            'is_terminal' => $isTerminal,
+            'caller_name' => $callLog->meta['caller_name'] ?? config('integrations.exotel.caller_name'),
+            'virtual_number' => $callLog->virtual_number,
         ];
     }
 
     public function handleStatusCallback(array $payload): void
     {
         $callSid = $payload['CallSid'] ?? $payload['Sid'] ?? null;
-        $status = $payload['Status'] ?? $payload['DialCallStatus'] ?? null;
+        $status = $payload['Status'] ?? $payload['DialCallStatus'] ?? $payload['EventType'] ?? null;
         $custom = (string) ($payload['CustomField'] ?? '');
         $callLogId = null;
 
@@ -217,13 +267,82 @@ class VirtualCallService
 
         $update = ['meta' => $meta];
         if ($status) {
-            $update['status'] = strtolower((string) $status);
+            $update['status'] = $this->normalizeStatus((string) $status);
         }
         if (isset($payload['DialCallDuration']) || isset($payload['Duration'])) {
             $update['duration_seconds'] = (int) ($payload['DialCallDuration'] ?? $payload['Duration']);
         }
 
         $callLog->update($update);
+    }
+
+    protected function refreshFromExotel(CallLog $callLog): void
+    {
+        $callSid = $callLog->provider_call_id;
+        if (! $callSid || str_starts_with((string) $callSid, 'demo-')) {
+            return;
+        }
+
+        // Only poll Exotel while still waiting for provider ring.
+        if (! in_array(strtolower((string) $callLog->status), ['initiated', 'queued'], true)) {
+            return;
+        }
+
+        $sid = config('integrations.exotel.sid');
+        $apiKey = config('integrations.exotel.api_key');
+        $apiToken = config('integrations.exotel.api_token');
+        if (! $sid || ! $apiKey || ! $apiToken) {
+            return;
+        }
+
+        $primary = config('integrations.exotel.subdomain', 'api');
+        $hosts = array_values(array_unique([$primary, 'api', 'api.in']));
+
+        foreach ($hosts as $subdomain) {
+            $url = "https://{$subdomain}.exotel.com/v1/Accounts/{$sid}/Calls/{$callSid}.json";
+            $response = Http::withBasicAuth($apiKey, $apiToken)->timeout(10)->get($url);
+
+            if ($response->status() === 401) {
+                continue;
+            }
+
+            if (! $response->successful()) {
+                return;
+            }
+
+            $data = $response->json();
+            $exotelStatus = $data['Call']['Status'] ?? null;
+            if (! $exotelStatus) {
+                return;
+            }
+
+            $normalized = $this->normalizeStatus((string) $exotelStatus);
+            $meta = $callLog->meta ?? [];
+            $meta['polls'] = array_values(array_merge($meta['polls'] ?? [], [[
+                'at' => now()->toIso8601String(),
+                'status' => $normalized,
+            ]]));
+
+            $callLog->update([
+                'status' => $normalized,
+                'meta' => $meta,
+            ]);
+
+            return;
+        }
+    }
+
+    protected function normalizeStatus(string $status): string
+    {
+        $status = strtolower(trim($status));
+
+        return match ($status) {
+            'in-progress', 'in_progress', 'answered' => 'in-progress',
+            'no-answer', 'no_answer' => 'no-answer',
+            'cancelled' => 'canceled',
+            'terminal' => 'completed',
+            default => $status,
+        };
     }
 
     /**
