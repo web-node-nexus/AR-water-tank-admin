@@ -98,6 +98,10 @@
             <div class="space-y-2">
                 <a href="{{ route('admin.customers.edit', $customer) }}" class="block w-full text-center py-2 border border-slate-300 text-slate-700 text-sm font-medium rounded-xl hover:bg-slate-50">Edit Customer</a>
                 <a href="{{ route('admin.bookings.create') }}" class="block w-full text-center py-2 bg-cyan-50 text-cyan-700 text-sm font-medium rounded-xl hover:bg-cyan-100">New Booking</a>
+                <form method="POST" action="{{ route('admin.customers.destroy', $customer) }}" onsubmit="return confirm('Delete customer {{ $customer->name }}? Bookings will stay, but this customer record will be removed.')">
+                    @csrf @method('DELETE')
+                    <button type="submit" class="w-full py-2 border border-red-200 text-red-600 text-sm font-medium rounded-xl hover:bg-red-50">Delete Customer</button>
+                </form>
                 <a href="{{ route('admin.customers.index') }}" class="block w-full text-center py-2 text-cyan-600 text-sm font-medium hover:underline">← Back to List</a>
             </div>
         </div>

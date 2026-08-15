@@ -33,7 +33,8 @@ Route::middleware(['auth', 'admin'])->prefix('admin')->name('admin.')->group(fun
     Route::post('bookings/{booking}/assign', [BookingController::class, 'assign'])->name('bookings.assign');
     Route::post('bookings/{booking}/cancel', [BookingController::class, 'cancel'])->name('bookings.cancel');
 
-    Route::resource('customers', CustomerController::class)->only(['index', 'show', 'edit', 'update']);
+    Route::get('customers/export', [CustomerController::class, 'export'])->name('customers.export');
+    Route::resource('customers', CustomerController::class)->only(['index', 'show', 'edit', 'update', 'destroy']);
 
     Route::resource('services', ServiceController::class);
     Route::post('services/{service}/slabs', [ServiceController::class, 'storeSlab'])->name('services.slabs.store');

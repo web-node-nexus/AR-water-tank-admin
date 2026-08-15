@@ -12,6 +12,9 @@
                 class="rounded-xl border border-slate-300 px-4 py-2 text-sm w-64 focus:border-cyan-500 focus:ring-2 focus:ring-cyan-500/20 outline-none">
             <button type="submit" class="px-4 py-2 bg-slate-900 text-white text-sm font-medium rounded-xl hover:bg-slate-800">Search</button>
         </form>
+        <a href="{{ route('admin.customers.export', request()->query()) }}" class="inline-flex items-center gap-2 px-4 py-2 border border-slate-300 text-slate-700 text-sm font-semibold rounded-xl hover:bg-slate-50">
+            Export CSV
+        </a>
     </div>
 
     <div class="bg-white rounded-2xl border border-slate-200/80 shadow-sm overflow-hidden">
@@ -41,6 +44,10 @@
                             <div class="flex items-center gap-3">
                                 <a href="{{ route('admin.customers.show', $customer) }}" class="text-cyan-600 hover:underline text-xs font-medium">View</a>
                                 <a href="{{ route('admin.customers.edit', $customer) }}" class="text-slate-600 hover:underline text-xs font-medium">Edit</a>
+                                <form method="POST" action="{{ route('admin.customers.destroy', $customer) }}" onsubmit="return confirm('Delete customer {{ $customer->name }}? Bookings will stay, but this customer record will be removed.')">
+                                    @csrf @method('DELETE')
+                                    <button type="submit" class="text-red-600 hover:underline text-xs font-medium">Delete</button>
+                                </form>
                             </div>
                         </td>
                     </tr>
