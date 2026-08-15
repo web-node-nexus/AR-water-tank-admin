@@ -119,12 +119,24 @@ class VirtualCallService
                 'call_log_id' => $callLog->id,
             ]);
 
-            $response = Http::withBasicAuth($apiKey, $apiToken)
-                ->asForm()
-                ->timeout(30)
-                ->post($url, $payload);
+            try {
+                $response = Http::withBasicAuth($apiKey, $apiToken)
+                    ->asForm()
+                    ->timeout(20)
+                    ->connectTimeout(10)
+                    ->post($url, $payload);
 
-            $lastBody = $response->body();
+                $lastBody = $response->body();
+            } catch (Throwable $e) {
+                Log::error('Exotel connect exception', [
+                    'host' => $subdomain,
+                    'error' => $e->getMessage(),
+                    'call_log_id' => $callLog->id,
+                ]);
+                $lastBody = $e->getMessage();
+                $response = null;
+                continue;
+            }
 
             if ($response->status() === 401) {
                 Log::warning('Exotel auth failed on host, trying next', [
@@ -143,40 +155,45 @@ class VirtualCallService
             $responseTo = $data['Call']['To'] ?? null;
             $exotelStatus = strtolower((string) ($data['Call']['Status'] ?? 'queued'));
 
-            $callLog->update([
-                // Stay "queued" until StatusCallback / poll says ringing (provider phone ringing).
-                'status' => $this->normalizeStatus($exotelStatus) === 'ringing' ? 'ringing' : 'queued',
-                'provider_call_id' => $callSid,
-                'meta' => [
-                    'caller_name' => $callerName,
-                    'host' => $usedHost,
-                    'dial_order' => 'provider_first',
-                    'request' => $payload,
-                    'response' => $data,
-                ],
-            ]);
-
-            if (empty($responseTo)) {
-                return [
-                    'success' => false,
-                    'message' => 'Customer call was not queued. On Exotel free trial, verify customer number in Exotel dashboard first.',
-                    'virtual_number' => $virtualNumber,
-                    'caller_name' => $callerName,
+            try {
+                $callLog->update([
+                    // Stay "queued" until StatusCallback / poll says ringing (provider phone ringing).
+                    'status' => $this->normalizeStatus($exotelStatus) === 'ringing' ? 'ringing' : 'queued',
+                    'provider_call_id' => $callSid,
+                    'meta' => [
+                        'caller_name' => $callerName,
+                        'host' => $usedHost,
+                        'dial_order' => 'provider_first',
+                        'request' => [
+                            'From' => $payload['From'],
+                            'To' => $payload['To'],
+                            'CallerId' => $payload['CallerId'],
+                            'CallerName' => $payload['CallerName'],
+                        ],
+                        'response_sid' => $callSid,
+                        'response_status' => $exotelStatus,
+                    ],
+                ]);
+            } catch (Throwable $e) {
+                Log::error('Call log update failed after Exotel success', [
                     'call_log_id' => $callLog->id,
-                    'status' => $callLog->status,
-                ];
+                    'error' => $e->getMessage(),
+                ]);
             }
 
+            // Call was accepted by Exotel — treat as success even if secondary fields are empty.
             return [
                 'success' => true,
                 'mode' => 'live',
-                'message' => 'Connecting… Your phone will ring first.',
+                'message' => empty($responseTo)
+                    ? 'Call started. If customer does not get connected on trial accounts, verify their number in Exotel.'
+                    : 'Connecting… Your phone will ring first.',
                 'virtual_number' => $virtualNumber,
                 'caller_name' => $callerName,
                 'from' => $from,
                 'to' => $to,
                 'call_log_id' => $callLog->id,
-                'status' => $callLog->status,
+                'status' => $callLog->fresh()?->status ?? 'queued',
             ];
         }
 

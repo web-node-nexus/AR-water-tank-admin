@@ -87,6 +87,10 @@
             <h3 class="font-semibold text-slate-900 mb-4">Actions</h3>
             <div class="space-y-2">
                 <a href="{{ route('admin.bookings.edit', $booking) }}" class="block w-full text-center py-2 border border-slate-300 text-slate-700 text-sm font-medium rounded-xl hover:bg-slate-50">Edit Booking</a>
+                <form method="POST" action="{{ route('admin.bookings.destroy', $booking) }}" onsubmit="return confirm('Delete booking {{ $booking->booking_number }}? This cannot be undone.')">
+                    @csrf @method('DELETE')
+                    <button type="submit" class="block w-full py-2 border border-red-200 text-red-600 text-sm font-medium rounded-xl hover:bg-red-50">Delete Booking</button>
+                </form>
                 <a href="{{ route('admin.bookings.index') }}" class="block w-full text-center py-2 text-cyan-600 text-sm font-medium hover:underline">← Back to List</a>
             </div>
         </div>

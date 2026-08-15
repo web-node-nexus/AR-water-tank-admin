@@ -28,6 +28,7 @@ Route::middleware(['auth', 'admin'])->prefix('admin')->name('admin.')->group(fun
     Route::get('bookings/import', [BookingController::class, 'importForm'])->name('bookings.import');
     Route::get('bookings/import/template', [BookingController::class, 'downloadTemplate'])->name('bookings.import.template');
     Route::post('bookings/import', [BookingController::class, 'import'])->name('bookings.import.store');
+    Route::get('bookings/export', [BookingController::class, 'export'])->name('bookings.export');
     Route::resource('bookings', BookingController::class);
     Route::post('bookings/{booking}/assign', [BookingController::class, 'assign'])->name('bookings.assign');
     Route::post('bookings/{booking}/cancel', [BookingController::class, 'cancel'])->name('bookings.cancel');
@@ -38,6 +39,7 @@ Route::middleware(['auth', 'admin'])->prefix('admin')->name('admin.')->group(fun
     Route::post('services/{service}/slabs', [ServiceController::class, 'storeSlab'])->name('services.slabs.store');
     Route::delete('slabs/{slab}', [ServiceController::class, 'destroySlab'])->name('services.slabs.destroy');
 
+    Route::get('providers/export', [ServiceProviderController::class, 'export'])->name('providers.export');
     Route::resource('providers', ServiceProviderController::class);
     Route::post('providers/{provider}/toggle-status', [ServiceProviderController::class, 'toggleStatus'])->name('providers.toggle-status');
     Route::post('providers/{provider}/resend-credentials', [ServiceProviderController::class, 'resendCredentials'])->name('providers.resend-credentials');

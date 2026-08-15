@@ -17,9 +17,14 @@
             </select>
             <button type="submit" class="px-4 py-2 bg-slate-900 text-white text-sm font-medium rounded-xl hover:bg-slate-800">Filter</button>
         </form>
-        <a href="{{ route('admin.providers.create') }}" class="inline-flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-cyan-600 to-blue-600 text-white text-sm font-semibold rounded-xl hover:from-cyan-700 hover:to-blue-700 shadow-lg shadow-cyan-500/25">
-            + Add Provider
-        </a>
+        <div class="flex flex-wrap gap-2">
+            <a href="{{ route('admin.providers.export', request()->query()) }}" class="inline-flex items-center gap-2 px-4 py-2 border border-slate-300 text-slate-700 text-sm font-semibold rounded-xl hover:bg-slate-50">
+                Export CSV
+            </a>
+            <a href="{{ route('admin.providers.create') }}" class="inline-flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-cyan-600 to-blue-600 text-white text-sm font-semibold rounded-xl hover:from-cyan-700 hover:to-blue-700 shadow-lg shadow-cyan-500/25">
+                + Add Provider
+            </a>
+        </div>
     </div>
 
     <div class="bg-white rounded-2xl border border-slate-200/80 shadow-sm overflow-hidden">
@@ -27,6 +32,7 @@
             <table class="w-full text-sm">
                 <thead class="bg-slate-50 text-slate-500">
                     <tr>
+                        <th class="text-left px-6 py-3 font-medium">ID</th>
                         <th class="text-left px-6 py-3 font-medium">Name</th>
                         <th class="text-left px-6 py-3 font-medium">Email / Phone</th>
                         <th class="text-left px-6 py-3 font-medium">Zone</th>
@@ -39,6 +45,7 @@
                 <tbody class="divide-y divide-slate-100">
                     @forelse($providers as $provider)
                     <tr class="hover:bg-slate-50/50 {{ !$provider->is_active ? 'opacity-70' : '' }}">
+                        <td class="px-6 py-3 font-medium text-cyan-600">{{ $provider->id }}</td>
                         <td class="px-6 py-3">
                             <a href="{{ route('admin.providers.show', $provider) }}" class="font-medium text-cyan-600 hover:underline">{{ $provider->name }}</a>
                         </td>
@@ -61,11 +68,15 @@
                             <div class="flex items-center gap-3">
                                 <a href="{{ route('admin.providers.show', $provider) }}" class="text-cyan-600 hover:underline text-xs font-medium">View</a>
                                 <a href="{{ route('admin.providers.edit', $provider) }}" class="text-slate-600 hover:underline text-xs font-medium">Edit</a>
+                                <form method="POST" action="{{ route('admin.providers.destroy', $provider) }}" onsubmit="return confirm('Delete provider {{ $provider->name }}? Bookings will stay, but this provider will be removed.')">
+                                    @csrf @method('DELETE')
+                                    <button type="submit" class="text-red-600 hover:underline text-xs font-medium">Delete</button>
+                                </form>
                             </div>
                         </td>
                     </tr>
                     @empty
-                    <tr><td colspan="7" class="px-6 py-12 text-center text-slate-500">No providers found</td></tr>
+                    <tr><td colspan="8" class="px-6 py-12 text-center text-slate-500">No providers found</td></tr>
                     @endforelse
                 </tbody>
             </table>

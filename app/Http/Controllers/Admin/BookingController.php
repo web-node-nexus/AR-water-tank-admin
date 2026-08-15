@@ -24,28 +24,71 @@ class BookingController extends Controller
 {
     public function index(Request $request)
     {
-        $query = Booking::with(['service', 'provider', 'customer']);
-
-        if ($request->filled('status')) {
-            $query->where('status', $request->status);
-        }
-
-        if ($request->filled('search')) {
-            $search = $request->search;
-            $query->where(function ($q) use ($search) {
-                $q->where('booking_number', 'like', "%{$search}%")
-                    ->orWhere('customer_name', 'like', "%{$search}%")
-                    ->orWhere('customer_phone', 'like', "%{$search}%");
-            });
-        }
-
-        if ($request->filled('date')) {
-            $query->whereDate('scheduled_date', $request->date);
-        }
-
-        $bookings = $query->latest()->paginate(15)->withQueryString();
+        $bookings = $this->filteredBookings($request)->latest()->paginate(15)->withQueryString();
 
         return view('admin.bookings.index', compact('bookings'));
+    }
+
+    public function export(Request $request): StreamedResponse
+    {
+        $filename = 'bookings-'.now()->format('Y-m-d-His').'.csv';
+
+        return response()->streamDownload(function () use ($request) {
+            $out = fopen('php://output', 'w');
+            fwrite($out, "\xEF\xBB\xBF");
+            fputcsv($out, [
+                'booking_number',
+                'customer_name',
+                'customer_phone',
+                'customer_address',
+                'latitude',
+                'longitude',
+                'pincode',
+                'service',
+                'provider',
+                'tank_type',
+                'tank_size',
+                'amount',
+                'status',
+                'payment_status',
+                'scheduled_date',
+                'scheduled_time',
+                'special_notes',
+                'created_at',
+            ]);
+
+            $this->filteredBookings($request)
+                ->with(['service', 'provider'])
+                ->latest()
+                ->chunk(200, function ($bookings) use ($out) {
+                    foreach ($bookings as $booking) {
+                        fputcsv($out, [
+                            $booking->booking_number,
+                            $booking->customer_name,
+                            $booking->customer_phone,
+                            $booking->customer_address,
+                            $booking->latitude,
+                            $booking->longitude,
+                            $booking->pincode,
+                            $booking->service?->name,
+                            $booking->provider?->name,
+                            $booking->tank_type,
+                            $booking->tank_size,
+                            $booking->amount,
+                            $booking->status?->value ?? $booking->status,
+                            $booking->payment_status,
+                            optional($booking->scheduled_date)->format('Y-m-d'),
+                            $booking->scheduled_time ? substr((string) $booking->scheduled_time, 0, 5) : '',
+                            $booking->special_notes,
+                            optional($booking->created_at)->format('Y-m-d H:i'),
+                        ]);
+                    }
+                });
+
+            fclose($out);
+        }, $filename, [
+            'Content-Type' => 'text/csv; charset=UTF-8',
+        ]);
     }
 
     public function create()
@@ -403,6 +446,30 @@ class BookingController extends Controller
 
         return redirect()->route('admin.bookings.index')
             ->with('success', 'Booking deleted.');
+    }
+
+    protected function filteredBookings(Request $request)
+    {
+        $query = Booking::with(['service', 'provider', 'customer']);
+
+        if ($request->filled('status')) {
+            $query->where('status', $request->status);
+        }
+
+        if ($request->filled('search')) {
+            $search = $request->search;
+            $query->where(function ($q) use ($search) {
+                $q->where('booking_number', 'like', "%{$search}%")
+                    ->orWhere('customer_name', 'like', "%{$search}%")
+                    ->orWhere('customer_phone', 'like', "%{$search}%");
+            });
+        }
+
+        if ($request->filled('date')) {
+            $query->whereDate('scheduled_date', $request->date);
+        }
+
+        return $query;
     }
 
     protected function bookingRules(bool $forUpdate = false, bool $forImport = false): array

@@ -149,6 +149,10 @@
                 </form>
                 <a href="{{ route('admin.bookings.create') }}?provider_id={{ $provider->id }}" class="block w-full text-center py-2 bg-cyan-50 text-cyan-700 text-sm font-medium rounded-xl hover:bg-cyan-100">Assign New Job</a>
                 <a href="{{ route('admin.payouts.create') }}?provider_id={{ $provider->id }}" class="block w-full text-center py-2 border border-slate-200 text-slate-700 text-sm font-medium rounded-xl hover:bg-slate-50">Create Payout</a>
+                <form method="POST" action="{{ route('admin.providers.destroy', $provider) }}" onsubmit="return confirm('Delete provider {{ $provider->name }}? Bookings will stay, but this provider will be removed.')">
+                    @csrf @method('DELETE')
+                    <button type="submit" class="w-full py-2 border border-red-200 text-red-600 text-sm font-medium rounded-xl hover:bg-red-50">Delete Provider</button>
+                </form>
                 <a href="{{ route('admin.providers.index') }}" class="block w-full text-center py-2 text-cyan-600 text-sm font-medium hover:underline">← Back to List</a>
             </div>
         </div>

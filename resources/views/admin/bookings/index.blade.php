@@ -20,6 +20,9 @@
             <button type="submit" class="px-4 py-2 bg-slate-900 text-white text-sm font-medium rounded-xl hover:bg-slate-800">Filter</button>
         </form>
         <div class="flex flex-wrap gap-2">
+            <a href="{{ route('admin.bookings.export', request()->query()) }}" class="inline-flex items-center gap-2 px-4 py-2 border border-slate-300 text-slate-700 text-sm font-semibold rounded-xl hover:bg-slate-50">
+                Export CSV
+            </a>
             <a href="{{ route('admin.bookings.import') }}" class="inline-flex items-center gap-2 px-4 py-2 border border-cyan-600 text-cyan-700 text-sm font-semibold rounded-xl hover:bg-cyan-50">
                 Upload Excel
             </a>
@@ -58,7 +61,13 @@
                         <td class="px-6 py-3">@include('admin.partials.status-badge', ['status' => $booking->status])</td>
                         <td class="px-6 py-3 font-medium">₹{{ number_format($booking->amount) }}</td>
                         <td class="px-6 py-3">
-                            <a href="{{ route('admin.bookings.show', $booking) }}" class="text-cyan-600 hover:underline text-xs font-medium">View</a>
+                            <div class="flex items-center gap-3">
+                                <a href="{{ route('admin.bookings.show', $booking) }}" class="text-cyan-600 hover:underline text-xs font-medium">View</a>
+                                <form method="POST" action="{{ route('admin.bookings.destroy', $booking) }}" onsubmit="return confirm('Delete booking {{ $booking->booking_number }}? This cannot be undone.')">
+                                    @csrf @method('DELETE')
+                                    <button type="submit" class="text-red-600 hover:underline text-xs font-medium">Delete</button>
+                                </form>
+                            </div>
                         </td>
                     </tr>
                     @empty

@@ -12,6 +12,7 @@ use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Mail;
 use Illuminate\Support\Str;
 use Illuminate\Validation\Rules;
+use Symfony\Component\HttpFoundation\StreamedResponse;
 use Throwable;
 
 class ServiceProviderController extends Controller
@@ -34,24 +35,58 @@ class ServiceProviderController extends Controller
     }
     public function index(Request $request)
     {
-        $query = ServiceProvider::with('zone')->withCount('bookings');
-
-        if ($request->filled('search')) {
-            $search = $request->search;
-            $query->where(function ($q) use ($search) {
-                $q->where('name', 'like', "%{$search}%")
-                    ->orWhere('phone', 'like', "%{$search}%")
-                    ->orWhere('email', 'like', "%{$search}%");
-            });
-        }
-
-        if ($request->filled('status')) {
-            $query->where('is_active', $request->status === 'active');
-        }
-
-        $providers = $query->latest()->paginate(15)->withQueryString();
+        $providers = $this->filteredProviders($request)->latest()->paginate(15)->withQueryString();
 
         return view('admin.providers.index', compact('providers'));
+    }
+
+    public function export(Request $request): StreamedResponse
+    {
+        $filename = 'service-providers-'.now()->format('Y-m-d-His').'.csv';
+
+        return response()->streamDownload(function () use ($request) {
+            $out = fopen('php://output', 'w');
+            fwrite($out, "\xEF\xBB\xBF");
+            fputcsv($out, [
+                'id',
+                'name',
+                'email',
+                'phone',
+                'zone',
+                'service_area',
+                'availability_status',
+                'is_active',
+                'jobs',
+                'rating',
+                'total_earnings',
+                'created_at',
+            ]);
+
+            $this->filteredProviders($request)
+                ->latest()
+                ->chunk(200, function ($providers) use ($out) {
+                    foreach ($providers as $provider) {
+                        fputcsv($out, [
+                            $provider->id,
+                            $provider->name,
+                            $provider->email,
+                            $provider->phone,
+                            $provider->zone?->name,
+                            $provider->service_area,
+                            $provider->availability_status,
+                            $provider->is_active ? 'enabled' : 'disabled',
+                            $provider->bookings_count,
+                            $provider->rating_avg,
+                            $provider->total_earnings,
+                            optional($provider->created_at)->format('Y-m-d H:i'),
+                        ]);
+                    }
+                });
+
+            fclose($out);
+        }, $filename, [
+            'Content-Type' => 'text/csv; charset=UTF-8',
+        ]);
     }
 
     public function create()
@@ -163,13 +198,33 @@ class ServiceProviderController extends Controller
 
     public function destroy(ServiceProvider $provider)
     {
-        $provider->update(['is_active' => false]);
+        $name = $provider->name;
         $provider->tokens()->delete();
-
-        AuditService::log('provider_deactivated', $provider);
+        AuditService::log('provider_deleted', $provider, $provider->toArray());
+        $provider->delete();
 
         return redirect()->route('admin.providers.index')
-            ->with('success', 'Provider disabled successfully.');
+            ->with('success', $name.' has been deleted.');
+    }
+
+    protected function filteredProviders(Request $request)
+    {
+        $query = ServiceProvider::with('zone')->withCount('bookings');
+
+        if ($request->filled('search')) {
+            $search = $request->search;
+            $query->where(function ($q) use ($search) {
+                $q->where('name', 'like', "%{$search}%")
+                    ->orWhere('phone', 'like', "%{$search}%")
+                    ->orWhere('email', 'like', "%{$search}%");
+            });
+        }
+
+        if ($request->filled('status')) {
+            $query->where('is_active', $request->status === 'active');
+        }
+
+        return $query;
     }
 
     public function toggleStatus(ServiceProvider $provider)

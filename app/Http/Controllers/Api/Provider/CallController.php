@@ -22,12 +22,25 @@ class CallController extends Controller
         if ((int) $booking->provider_id !== (int) $request->user()->id) {
             return response()->json([
                 'message' => 'This job is not assigned to you.',
+                'success' => false,
             ], 403);
         }
 
-        $result = $this->callService->initiateCall($request->user(), $booking);
+        try {
+            $result = $this->callService->initiateCall($request->user(), $booking);
 
-        return response()->json($result, $result['success'] ? 200 : 422);
+            return response()->json($result, ! empty($result['success']) ? 200 : 422);
+        } catch (\Throwable $e) {
+            \Illuminate\Support\Facades\Log::error('callCustomer failed', [
+                'booking_id' => $booking->id,
+                'error' => $e->getMessage(),
+            ]);
+
+            return response()->json([
+                'success' => false,
+                'message' => 'Could not start the call. Please try again.',
+            ], 422);
+        }
     }
 
     /**
