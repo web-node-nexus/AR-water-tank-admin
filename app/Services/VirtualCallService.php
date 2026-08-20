@@ -7,6 +7,7 @@ use App\Models\CallLog;
 use App\Models\ServiceProvider;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
+use Throwable;
 
 class VirtualCallService
 {
@@ -293,6 +294,252 @@ class VirtualCallService
         $callLog->update($update);
     }
 
+    /**
+     * Incoming ExoPhone call (customer calling back the virtual number).
+     * Returns ExoML so Exotel Passthru / Voice URL can Dial the mapped provider.
+     */
+    public function handleIncomingPassthru(array $payload): string
+    {
+        $route = $this->prepareInboundRoute($payload);
+
+        if (! $route) {
+            $fromLast10 = $this->lastTen((string) ($payload['From'] ?? $payload['CallFrom'] ?? $payload['from'] ?? ''));
+
+            if ($fromLast10 === '') {
+                return $this->exomlHangup('We could not identify your number. Please try again.');
+            }
+
+            return $this->exomlHangup('Sorry, we could not connect your call right now. Please try again later.');
+        }
+
+        return $this->exomlDial($route['dialNumber'], $route['callerId']);
+    }
+
+    /**
+     * Connect applet (App Bazaar) Application URL — JSON destination numbers.
+     *
+     * @return array<string, mixed>
+     */
+    public function handleIncomingConnect(array $payload): array
+    {
+        $route = $this->prepareInboundRoute($payload);
+
+        if (! $route) {
+            return [
+                'fetch_after_attempt' => false,
+                'destination' => ['numbers' => []],
+            ];
+        }
+
+        $outgoing = $this->formatE164($route['callerId']);
+
+        $response = [
+            'fetch_after_attempt' => false,
+            'destination' => [
+                'numbers' => [$this->formatE164($route['dialNumber'])],
+            ],
+            'record' => false,
+            'max_ringing_duration' => 45,
+            'max_conversation_duration' => 3600,
+            'music_on_hold' => ['type' => 'operator_tone'],
+        ];
+
+        if ($outgoing !== '') {
+            $response['outgoing_phone_number'] = $outgoing;
+        }
+
+        return $response;
+    }
+
+    /**
+     * @return array{dialNumber: string, callerId: string, destination: array{number: string, provider_id: int, booking_id: ?int, customer_phone: string, provider_phone: string, role: string}}|null
+     */
+    protected function prepareInboundRoute(array $payload): ?array
+    {
+        $from = (string) ($payload['From'] ?? $payload['CallFrom'] ?? $payload['from'] ?? '');
+        $to = (string) ($payload['To'] ?? $payload['CallTo'] ?? $payload['to'] ?? '');
+        $callSid = $payload['CallSid'] ?? $payload['Sid'] ?? null;
+        $fromLast10 = $this->lastTen($from);
+        $virtualNumber = $this->formatCallerId(
+            $to !== '' ? $to : (string) config('integrations.exotel.virtual_number')
+        );
+
+        Log::info('Exotel incoming passthru', [
+            'from' => $from,
+            'to' => $to,
+            'call_sid' => $callSid,
+        ]);
+
+        if ($fromLast10 === '') {
+            return null;
+        }
+
+        $destination = $this->resolveInboundDestination($fromLast10);
+
+        if (! $destination) {
+            Log::warning('Exotel incoming: no mapping found', ['from' => $fromLast10]);
+
+            return null;
+        }
+
+        if ($this->lastTen($destination['number']) === $fromLast10) {
+            Log::warning('Exotel incoming: destination matches caller', ['from' => $fromLast10]);
+
+            return null;
+        }
+
+        $dialNumber = $this->formatPhone($destination['number']);
+        $callerId = $virtualNumber ?: $this->formatCallerId((string) config('integrations.exotel.virtual_number'));
+
+        try {
+            CallLog::create([
+                'provider_id' => $destination['provider_id'],
+                'booking_id' => $destination['booking_id'],
+                'customer_phone' => $destination['customer_phone'],
+                'virtual_number' => $callerId,
+                'provider_phone' => $destination['provider_phone'],
+                'provider_call_id' => is_string($callSid) ? $callSid : null,
+                'status' => 'initiated',
+                'meta' => [
+                    'direction' => 'inbound_callback',
+                    'from' => $from,
+                    'to' => $to,
+                    'dial' => $dialNumber,
+                    'role' => $destination['role'],
+                ],
+            ]);
+        } catch (Throwable $e) {
+            Log::error('Exotel inbound call log failed', ['error' => $e->getMessage()]);
+        }
+
+        Log::info('Exotel incoming routed', [
+            'from' => $fromLast10,
+            'dial' => $dialNumber,
+            'role' => $destination['role'],
+        ]);
+
+        return [
+            'dialNumber' => $dialNumber,
+            'callerId' => $callerId,
+            'destination' => $destination,
+        ];
+    }
+
+    /**
+     * @return array{number: string, provider_id: int, booking_id: ?int, customer_phone: string, provider_phone: string, role: string}|null
+     */
+    protected function resolveInboundDestination(string $fromLast10): ?array
+    {
+        $asCustomer = $this->latestCallMatching('customer_phone', $fromLast10);
+        if ($asCustomer?->provider_phone) {
+            return [
+                'number' => $asCustomer->provider_phone,
+                'provider_id' => (int) $asCustomer->provider_id,
+                'booking_id' => $asCustomer->booking_id ? (int) $asCustomer->booking_id : null,
+                'customer_phone' => $asCustomer->customer_phone,
+                'provider_phone' => $asCustomer->provider_phone,
+                'role' => 'customer_to_provider',
+            ];
+        }
+
+        $asProvider = $this->latestCallMatching('provider_phone', $fromLast10);
+        if ($asProvider?->customer_phone) {
+            return [
+                'number' => $asProvider->customer_phone,
+                'provider_id' => (int) $asProvider->provider_id,
+                'booking_id' => $asProvider->booking_id ? (int) $asProvider->booking_id : null,
+                'customer_phone' => $asProvider->customer_phone,
+                'provider_phone' => $asProvider->provider_phone,
+                'role' => 'provider_to_customer',
+            ];
+        }
+
+        $booking = Booking::with('provider')
+            ->whereNotNull('provider_id')
+            ->where(function ($q) use ($fromLast10) {
+                $this->applyPhoneVariants($q, 'customer_phone', $fromLast10);
+            })
+            ->latest('id')
+            ->first();
+
+        if ($booking?->provider?->phone) {
+            return [
+                'number' => $booking->provider->phone,
+                'provider_id' => (int) $booking->provider_id,
+                'booking_id' => (int) $booking->id,
+                'customer_phone' => $booking->customer_phone,
+                'provider_phone' => $booking->provider->phone,
+                'role' => 'booking_fallback',
+            ];
+        }
+
+        return null;
+    }
+
+    protected function latestCallMatching(string $column, string $last10): ?CallLog
+    {
+        return CallLog::query()
+            ->where(function ($q) use ($column, $last10) {
+                $this->applyPhoneVariants($q, $column, $last10);
+            })
+            ->where(function ($q) {
+                $q->whereNull('meta')
+                    ->orWhere('meta', 'not like', '%inbound_callback%');
+            })
+            ->where('created_at', '>=', now()->subDays(30))
+            ->latest('id')
+            ->first();
+    }
+
+    protected function applyPhoneVariants($query, string $column, string $last10): void
+    {
+        $variants = array_unique([
+            $last10,
+            '0'.$last10,
+            '91'.$last10,
+            '+91'.$last10,
+        ]);
+
+        $query->where(function ($q) use ($column, $variants, $last10) {
+            foreach ($variants as $variant) {
+                $q->orWhere($column, $variant);
+            }
+            $q->orWhere($column, 'like', '%'.$last10);
+        });
+    }
+
+    protected function lastTen(string $phone): string
+    {
+        $digits = preg_replace('/\D/', '', $phone) ?? '';
+
+        return strlen($digits) >= 10 ? substr($digits, -10) : $digits;
+    }
+
+    protected function exomlDial(string $number, string $callerId): string
+    {
+        $numberXml = htmlspecialchars($number, ENT_XML1);
+        $callerXml = htmlspecialchars($callerId, ENT_XML1);
+        $callerAttr = $callerId !== '' ? ' callerId="'.$callerXml.'"' : '';
+
+        return '<?xml version="1.0" encoding="UTF-8"?>'
+            .'<Response>'
+            .'<Dial'.$callerAttr.' timeout="45">'
+            .'<Number>'.$numberXml.'</Number>'
+            .'</Dial>'
+            .'</Response>';
+    }
+
+    protected function exomlHangup(string $message): string
+    {
+        $say = htmlspecialchars($message, ENT_XML1);
+
+        return '<?xml version="1.0" encoding="UTF-8"?>'
+            .'<Response>'
+            .'<Say>'.$say.'</Say>'
+            .'<Hangup/>'
+            .'</Response>';
+    }
+
     protected function refreshFromExotel(CallLog $callLog): void
     {
         $callSid = $callLog->provider_call_id;
@@ -360,6 +607,32 @@ class VirtualCallService
             'terminal' => 'completed',
             default => $status,
         };
+    }
+
+    /**
+     * E.164 for Connect applet destination numbers (e.g. +919876543210).
+     */
+    protected function formatE164(string $phone): string
+    {
+        $digits = preg_replace('/\D/', '', $phone) ?? '';
+
+        if ($digits === '') {
+            return '';
+        }
+
+        if (str_starts_with($digits, '91') && strlen($digits) >= 12) {
+            return '+'.$digits;
+        }
+
+        if (str_starts_with($digits, '0')) {
+            return '+91'.substr($digits, 1);
+        }
+
+        if (strlen($digits) === 10) {
+            return '+91'.$digits;
+        }
+
+        return '+'.$digits;
     }
 
     /**

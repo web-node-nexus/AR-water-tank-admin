@@ -8,6 +8,7 @@ use App\Models\CallLog;
 use App\Services\VirtualCallService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Symfony\Component\HttpFoundation\Response as SymfonyResponse;
 
 class CallController extends Controller
 {
@@ -63,5 +64,49 @@ class CallController extends Controller
         $this->callService->handleStatusCallback($request->all());
 
         return response()->json(['status' => 'received']);
+    }
+
+    /**
+     * Exotel incoming webhook.
+     * Passthru / Voice URL → ExoML Dial. Connect applet → JSON destination.
+     */
+    public function incoming(Request $request): SymfonyResponse
+    {
+        $payload = array_merge($request->query(), $request->all());
+
+        if ($this->wantsConnectJson($request)) {
+            return response()->json(
+                $this->callService->handleIncomingConnect($payload),
+                200
+            );
+        }
+
+        $xml = $this->callService->handleIncomingPassthru($payload);
+
+        return response($xml, 200)->header('Content-Type', 'text/plain; charset=UTF-8');
+    }
+
+    /**
+     * Dedicated Connect applet Application URL (always JSON).
+     */
+    public function incomingConnect(Request $request): JsonResponse
+    {
+        $payload = array_merge($request->query(), $request->all());
+
+        return response()->json(
+            $this->callService->handleIncomingConnect($payload),
+            200
+        );
+    }
+
+    protected function wantsConnectJson(Request $request): bool
+    {
+        if ($request->query('format') === 'exoml') {
+            return false;
+        }
+
+        return $request->query('format') === 'connect'
+            || $request->headers->has('Exotel-Version')
+            || str_contains((string) $request->header('Accept'), 'application/json');
     }
 }

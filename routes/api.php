@@ -12,14 +12,19 @@ use App\Http\Controllers\Api\Provider\ProfileController;
 use App\Http\Controllers\Api\Provider\SupportController;
 use Illuminate\Support\Facades\Route;
 
+Route::match(['get', 'post'], '/exotel/incoming', [CallController::class, 'incoming']);
+Route::match(['get', 'post'], '/exotel/incoming/connect', [CallController::class, 'incomingConnect']);
+Route::match(['get', 'post'], '/exotel-callback', [CallController::class, 'incoming']);
+
 Route::prefix('provider')->group(function () {
     // Public auth routes
     Route::post('/auth/login', [AuthController::class, 'login']);
     Route::post('/auth/send-otp', [AuthController::class, 'sendOtp']);
     Route::post('/auth/verify-otp', [AuthController::class, 'verifyOtp']);
 
-    // Exotel webhook (no auth)
+    // Exotel webhooks (no auth)
     Route::post('/calls/callback', [CallController::class, 'callback']);
+    Route::match(['get', 'post'], '/calls/incoming', [CallController::class, 'incoming']);
 
     // Protected provider routes
     Route::middleware(['auth:sanctum', 'provider'])->group(function () {
